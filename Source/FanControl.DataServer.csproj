@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Authors>Jesús Romero</Authors>
+    <VersionPrefix>1.0</VersionPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="FanControl.IPC">
+      <HintPath>$(MSBuildProgramFiles32)\FanControl\FanControl.IPC.dll</HintPath>
+    </Reference>
+    <Reference Include="FanControl.Plugins">
+      <HintPath>$(MSBuildProgramFiles32)\FanControl\FanControl.Plugins.dll</HintPath>
+    </Reference>
+    <Reference Include="Google.Protobuf">
+      <HintPath>$(MSBuildProgramFiles32)\FanControl\Google.Protobuf.dll</HintPath>
+    </Reference>
+    <Reference Include="Grpc.Core.Api">
+      <HintPath>$(MSBuildProgramFiles32)\FanControl\Grpc.Core.Api.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(MSBuildProgramFiles32)\FanControl\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>
