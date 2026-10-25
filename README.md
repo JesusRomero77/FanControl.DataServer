@@ -87,7 +87,7 @@ The server also allows any web page opened in a browser on the same computer or 
 
 ## Building from source
 
-Open `FanControl.DataServer.csproj` in Visual Studio with the .NET desktop development workload and the .NET Framework 4.8 targeting pack, with FanControl installed (the project looks for its DLLs in `C:\Program Files (x86)\FanControl\`; if it is installed elsewhere, change `FanControlDir` in the project file). Build in Release for x64.
+Open `Source/FanControl.DataServer.csproj` in Visual Studio with the .NET desktop development workload and the .NET Framework 4.8 targeting pack, with FanControl installed (the project looks for its DLLs in `C:\Program Files (x86)\FanControl\`; if it is installed elsewhere, change the path of each FanControl reference in the project file). Build in Release for x64.
 
 ## Related project
 
