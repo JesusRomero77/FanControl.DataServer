@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FanControl DataServer</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1d1d1f; --muted:#6b7280; --grid:#e5e7eb; --card:#f6f7f9; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16181d; --fg:#e8e9ec; --muted:#9aa0aa; --grid:#2c3038; --card:#1e2128; }
+  }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+  header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px 16px; }
+  h1 { font-size:18px; margin:0; }
+  #status { color:var(--muted); }
+  #status.bad { color:#dc2626; }
+  section { background:var(--card); border-radius:8px; padding:12px; margin-top:16px; }
+  h2 { font-size:14px; margin:0 0 8px; }
+  canvas { width:100%; height:260px; display:block; }
+  .legend { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:8px; }
+  .legend span { cursor:pointer; user-select:none; white-space:nowrap; }
+  .legend span.off { opacity:.4; text-decoration:line-through; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="title">FanControl</h1>
+  <form id="hostForm">
+    <label>Plugin: <input id="host" size="22"></label>
+    <button>Conectar</button>
+  </form>
+  <div id="status">Conectando…</div>
+</header>
+
+<section>
+  <h2>Sensores (°C)</h2>
+  <canvas id="cSensors"></canvas>
+  <div class="legend" id="lSensors"></div>
+</section>
+
+<section>
+  <h2>Controles (% PWM)</h2>
+  <canvas id="cControls"></canvas>
+  <div class="legend" id="lControls"></div>
+</section>
+
+<script>
+const WINDOW_MS = 5 * 60 * 1000;   // ventana de la gráfica: últimos 5 minutos
+const POLL_MS = 1000;              // el plugin renueva los datos una vez por segundo
+const STALE_MS = 5000;             // sin datos nuevos durante este tiempo = datos detenidos
+const COLORS = ['#2563eb','#dc2626','#16a34a','#d97706','#9333ea','#0891b2','#db2777','#65a30d','#4b5563','#ea580c'];
+
+const $ = id => document.getElementById(id);
+
+// Cada grupo es una gráfica: sus elementos salen de /profile (profile.sensors o profile.controls).
+const groups = [
+  { kind: 'sensors',  canvas: $('cSensors'),  legend: $('lSensors'),  unit: '°C', fixed: null },
+  { kind: 'controls', canvas: $('cControls'), legend: $('lControls'), unit: '%',  fixed: [0, 100] }
+];
+
+let host = new URLSearchParams(location.search).get('host') || loadSavedHost() || 'localhost:8765';
+let profile = null;          // última respuesta de /profile
+let seenProfileId = null;    // profileId de las últimas lecturas, para detectar cambios de perfil
+let lastSeq = -1;
+let lastChange = Date.now(); // momento en que llegó la última foto nueva
+let busy = false;
+const history = {};          // identifier -> [{ t, v }]
+const hidden = new Set();    // identifiers ocultados haciendo clic en la leyenda
+
+function loadSavedHost() {
+  try { return localStorage.getItem('host'); } catch (e) { return null; }
+}
+function saveHost(value) {
+  try { localStorage.setItem('host', value); } catch (e) { }
+}
+
+$('host').value = host;
+$('hostForm').onsubmit = event => {
+  event.preventDefault();
+  host = $('host').value.trim();
+  saveHost(host);
+  resetAll();
+  poll();
+};
+
+// Vuelve al estado inicial (al cambiar de plugin o de perfil).
+function resetAll() {
+  profile = null;
+  seenProfileId = null;
+  lastSeq = -1;
+  lastChange = Date.now();
+  hidden.clear();
+  for (const key in history) delete history[key];
+  for (const g of groups) g.legend.textContent = '';
+  draw();
+}
+
+// Pide /profile y reconstruye las leyendas; las lecturas guardadas se descartan porque
+// pertenecían al perfil anterior.
+async function loadProfile() {
+  const response = await fetch('http://' + host + '/profile');
+  profile = await response.json();
+  for (const key in history) delete history[key];
+  hidden.clear();
+  $('title').textContent = 'FanControl · ' + (profile.profileName || 'perfil');
+  buildLegends();
+}
+
+// Pide /readings una vez por segundo, añade los puntos a la historia y repinta.
+async function poll() {
+  if (busy) return;
+  busy = true;
+  try {
+    const response = await fetch('http://' + host + '/readings');
+    if (!response.ok) throw new Error(response.status);
+    const data = await response.json();
+
+    // Una secuencia que baja significa que el plugin se reinició: se vuelve a pedir el perfil.
+    if (data.sequence < lastSeq) {
+      seenProfileId = null;
+      lastSeq = -1;
+      for (const key in history) delete history[key];
+    }
+    if (!profile || data.profileId !== seenProfileId) {
+      seenProfileId = data.profileId;
+      await loadProfile();
+    }
+
+    if (data.sequence !== lastSeq) {
+      lastSeq = data.sequence;
+      lastChange = Date.now();
+      addPoints(data);
+    }
+
+    if (Date.now() - lastChange > STALE_MS) setStatus('Datos detenidos (¿FanControl cerrado?)', true);
+    else setStatus('Última lectura: ' + data.timestampUtc + ' UTC', false);
+  } catch (e) {
+    setStatus('Sin conexión con ' + host, true);
+  } finally {
+    busy = false;
+  }
+  updateLegends();
+  draw();
+}
+
+// Guarda un punto por cada lectura con valor y descarta los más antiguos que la ventana.
+function addPoints(data) {
+  const now = Date.now();
+  for (const reading of data.sensors.concat(data.controls)) {
+    if (reading.value === null) continue;
+    const points = history[reading.identifier] || (history[reading.identifier] = []);
+    points.push({ t: now, v: reading.value });
+    while (points.length && now - points[0].t > WINDOW_MS) points.shift();
+  }
+}
+
+function setStatus(text, bad) {
+  $('status').textContent = text;
+  $('status').className = bad ? 'bad' : '';
+}
+
+function colorOf(index) {
+  return COLORS[index % COLORS.length];
+}
+
+// Crea la leyenda de cada gráfica; hacer clic en un elemento lo oculta o lo muestra.
+function buildLegends() {
+  for (const g of groups) {
+    g.legend.textContent = '';
+    (profile[g.kind] || []).forEach((item, index) => {
+      const entry = document.createElement('span');
+      entry.dataset.id = item.identifier;
+      const swatch = document.createElement('i');
+      swatch.className = 'sw';
+      swatch.style.background = colorOf(index);
+      const label = document.createElement('b');
+      label.style.fontWeight = 'normal';
+      entry.append(swatch, label);
+      entry.onclick = () => {
+        if (hidden.has(item.identifier)) hidden.delete(item.identifier);
+        else hidden.add(item.identifier);
+        entry.classList.toggle('off');
+        draw();
+      };
+      g.legend.append(entry);
+    });
+  }
+  updateLegends();
+}
+
+// Pone en cada leyenda el nombre del elemento y su último valor.
+function updateLegends() {
+  if (!profile) return;
+  for (const g of groups) {
+    for (const entry of g.legend.children) {
+      const item = profile[g.kind].find(i => i.identifier === entry.dataset.id);
+      const points = history[entry.dataset.id];
+      const last = points && points.length ? points[points.length - 1].v : null;
+      const value = last === null ? '—' : last.toFixed(1) + ' ' + g.unit;
+      entry.lastChild.textContent = (item.name || item.identifier) + ': ' + value;
+    }
+  }
+}
+
+function draw() {
+  for (const g of groups) drawChart(g);
+}
+
+// Dibuja una gráfica de líneas: ejes, cuadrícula y una línea por cada elemento visible.
+function drawChart(g) {
+  const canvas = g.canvas;
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr)) canvas.width = Math.round(w * dpr);
+  if (canvas.height !== Math.round(h * dpr)) canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const style = getComputedStyle(document.documentElement);
+  const gridColor = style.getPropertyValue('--grid').trim();
+  const mutedColor = style.getPropertyValue('--muted').trim();
+  const items = profile ? profile[g.kind] : [];
+
+  // Rango vertical: fijo (0-100) para los controles; para sensores, se ajusta a los datos visibles.
+  let lo, hi;
+  if (g.fixed) {
+    [lo, hi] = g.fixed;
+  } else {
+    let min = Infinity, max = -Infinity;
+    for (const item of items) {
+      if (hidden.has(item.identifier)) continue;
+      for (const p of history[item.identifier] || []) {
+        if (p.v < min) min = p.v;
+        if (p.v > max) max = p.v;
+      }
+    }
+    if (min === Infinity) { min = 0; max = 1; }
+    lo = Math.floor(min - 1);
+    hi = Math.ceil(max + 1);
+    if (hi - lo < 5) hi = lo + 5;
+  }
+
+  const left = 44, right = 8, top = 8, bottom = 22;
+  const plotW = w - left - right, plotH = h - top - bottom;
+
+  // Cuadrícula horizontal con su escala.
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.fillStyle = mutedColor;
+  ctx.strokeStyle = gridColor;
+  ctx.lineWidth = 1;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    const y = top + plotH * i / 4;
+    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(w - right, y); ctx.stroke();
+    ctx.fillText(String(+(hi - (hi - lo) * i / 4).toFixed(1)), left - 6, y);
+  }
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+  ctx.fillText('-5 min', left, h - 6);
+  ctx.textAlign = 'right';
+  ctx.fillText('ahora', w - right, h - 6);
+
+  // Una línea por elemento; el color depende de su posición en la lista, igual que en la leyenda.
+  const now = Date.now();
+  ctx.lineWidth = 1.6;
+  ctx.lineJoin = 'round';
+  items.forEach((item, index) => {
+    if (hidden.has(item.identifier)) return;
+    const points = history[item.identifier];
+    if (!points || !points.length) return;
+    ctx.strokeStyle = colorOf(index);
+    ctx.beginPath();
+    points.forEach((p, i) => {
+      const x = left + (1 - (now - p.t) / WINDOW_MS) * plotW;
+      const y = top + (1 - (p.v - lo) / (hi - lo)) * plotH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+}
+
+window.addEventListener('resize', draw);
+setInterval(poll, POLL_MS);
+poll();
+</script>
+</body>
+</html>
