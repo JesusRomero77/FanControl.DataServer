@@ -101,6 +101,8 @@ This project is not affiliated with FanControl or its author.
 
 This project is licensed under the [MIT License](LICENSE).
 
+FanControl and the libraries it provides to plugins (such as Newtonsoft.Json) are not part of this repository and remain under their own licenses.
+
 ## Version
 
 1.0
