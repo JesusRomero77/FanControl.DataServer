@@ -29,6 +29,7 @@
   <h1 id="title">FanControl</h1>
   <form id="hostForm">
     <label>Plugin: <input id="host" size="22"></label>
+    <label>Contraseña: <input id="password" size="14" autocomplete="off"></label>
     <button>Conectar</button>
   </form>
   <div id="status">Conectando…</div>
@@ -61,6 +62,7 @@ const groups = [
 ];
 
 let host = new URLSearchParams(location.search).get('host') || loadSavedHost() || 'localhost:8765';
+let password = '';           // contraseña de DataServer; no se guarda en el navegador
 let profile = null;          // última respuesta de /profile
 let seenProfileId = null;    // profileId de las últimas lecturas, para detectar cambios de perfil
 let lastSeq = -1;
@@ -80,6 +82,7 @@ $('host').value = host;
 $('hostForm').onsubmit = event => {
   event.preventDefault();
   host = $('host').value.trim();
+  password = $('password').value.trim();
   saveHost(host);
   resetAll();
   poll();
@@ -97,11 +100,60 @@ function resetAll() {
   draw();
 }
 
+// Error de HTTP con su código, para poder explicar al usuario qué ha pasado.
+class HttpError extends Error {
+  constructor(status) {
+    super('HTTP ' + status);
+    this.status = status;
+  }
+}
+
+// Huella HMAC-SHA256 del mensaje con la contraseña como clave, en hexadecimal y minúsculas.
+// Usa la API de cifrado del navegador, que solo existe en páginas abiertas desde un archivo,
+// desde localhost o por https.
+async function hmacHex(key, message) {
+  const encoder = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey('raw', encoder.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(message));
+  return Array.from(new Uint8Array(signature), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Pide una ruta autenticada: primero /challenge para obtener el número de un solo uso y después
+// la ruta, con la firma en la cabecera Authorization. La contraseña no viaja.
+async function fetchJson(route) {
+  if (!window.crypto || !crypto.subtle) {
+    const error = new Error('no crypto');
+    error.noCrypto = true;
+    throw error;
+  }
+  // WebCrypto no admite claves vacías; el servidor tampoco acepta contraseña vacía.
+  if (!password) throw new HttpError(401);
+
+  const challenge = await fetch('http://' + host + '/challenge');
+  if (!challenge.ok) throw new HttpError(challenge.status);
+  const nonce = (await challenge.json()).nonce;
+
+  const response = await fetch('http://' + host + route, {
+    headers: { Authorization: 'HMAC ' + nonce + ':' + await hmacHex(password, nonce) }
+  });
+  if (!response.ok) throw new HttpError(response.status);
+  return response.json();
+}
+
+// Texto de estado para cada tipo de fallo.
+function describeError(error) {
+  if (error.noCrypto) return 'Abre esta página desde un archivo, localhost o https (hace falta para la firma)';
+  if (error.status === 401) return 'Contraseña incorrecta';
+  if (error.status === 429) return 'Servidor ocupado: límite de clientes o conexiones alcanzado';
+  if (error.status === 503) return 'DataServer aún no tiene datos';
+  return 'Sin conexión con ' + host;
+}
+
 // Pide /profile y reconstruye las leyendas; las lecturas guardadas se descartan porque
 // pertenecían al perfil anterior.
 async function loadProfile() {
-  const response = await fetch('http://' + host + '/profile');
-  profile = await response.json();
+  profile = await fetchJson('/profile');
   for (const key in history) delete history[key];
   hidden.clear();
   $('title').textContent = 'FanControl · ' + (profile.profileName || 'perfil');
@@ -113,9 +165,7 @@ async function poll() {
   if (busy) return;
   busy = true;
   try {
-    const response = await fetch('http://' + host + '/readings');
-    if (!response.ok) throw new Error(response.status);
-    const data = await response.json();
+    const data = await fetchJson('/readings');
 
     // Una secuencia que baja significa que el plugin se reinició: se vuelve a pedir el perfil.
     if (data.sequence < lastSeq) {
@@ -137,7 +187,7 @@ async function poll() {
     if (Date.now() - lastChange > STALE_MS) setStatus('Datos detenidos (¿FanControl cerrado?)', true);
     else setStatus('Última lectura: ' + data.timestampUtc + ' UTC', false);
   } catch (e) {
-    setStatus('Sin conexión con ' + host, true);
+    setStatus(describeError(e), true);
   } finally {
     busy = false;
   }
