@@ -58,7 +58,7 @@ The first time the plugin starts, it creates `%LocalAppData%\FanControl\DataServ
 - **Port:** if it is empty or not a valid number, the plugin uses 8765 (an invalid value also writes a warning to FanControl's error log).
 - **Password:** if it is empty, the plugin uses `Password1234`. **That default password is public, so change it.** Use only visible ASCII characters, with no spaces.
 
-You can edit the file by hand or with the DataServer tab of [WatchTower](https://github.com/JesusRomero77/FanControl-WatchTower). Restart the FanControl interface after changing it, because the plugin only reads the file when it starts.
+You can edit the file by hand or with the DataServer tab of [WatchTower](https://github.com/JesusRomero77/FanControl.WatchTower). Restart the FanControl interface after changing it, because the plugin only reads the file when it starts.
 
 ## How to get the data
 
@@ -166,7 +166,7 @@ Open `Source/FanControl.DataServer.csproj` in Visual Studio with the .NET deskto
 
 - [FanControl.CurveReader](https://github.com/JesusRomero77/FanControl.CurveReader): a FanControl plugin that logs temperature and PWM changes to a file.
 - [FanControl.RemoteSensors](https://github.com/JesusRomero77/FanControl.RemoteSensors): a FanControl plugin that shows the sensors served by this plugin, from another computer, inside FanControl.
-- [FanControl-WatchTower](https://github.com/JesusRomero77/FanControl-WatchTower): a program to configure these plugins and to record the data of a remote DataServer into a log.
+- [FanControl.WatchTower](https://github.com/JesusRomero77/FanControl.WatchTower): a program to configure these plugins and to record the data of a remote DataServer into a log.
 
 ## Disclaimer
 
