@@ -164,7 +164,7 @@ Open `Source/FanControl.DataServer.csproj` in Visual Studio with the .NET deskto
 
 ## Related projects
 
-- [FanControl.CurveReader](https://github.com/JesusRomero77/FanControl.CurveReader): a FanControl plugin that logs temperature and PWM changes to a file.
+- [FanControl.CurveReader](https://github.com/JesusRomero77/FanControl.CurveReader): a FanControl plugin that logs local temperature and PWM changes to a file.
 - [FanControl.RemoteSensors](https://github.com/JesusRomero77/FanControl.RemoteSensors): a FanControl plugin that shows the sensors served by this plugin, from another computer, inside FanControl.
 - [FanControl.WatchTower](https://github.com/JesusRomero77/FanControl.WatchTower): a program to configure these plugins and to record the data of a remote DataServer into a log.
 
