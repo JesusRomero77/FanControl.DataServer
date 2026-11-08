@@ -180,4 +180,4 @@ FanControl and the libraries it provides to plugins (such as Newtonsoft.Json) ar
 
 ## Version
 
-1.0
+2.0
