@@ -10,7 +10,8 @@ using Newtonsoft.Json.Serialization;
 
 namespace FanControl.DataServer
 {
-    // Servidor HTTP de solo lectura: responde con JSON a GET /profile y GET /readings.
+    // Servidor HTTP de solo lectura: responde con JSON a GET /challenge, /profile y /readings.
+    // /profile y /readings exigen la cabecera Authorization con la firma HMAC del desafío.
     // Solo lee las fotos de SnapshotStore; nunca toca el RPC ni FanControl.
     internal sealed class HttpDataServer
     {
@@ -99,45 +100,100 @@ namespace FanControl.DataServer
             }
         }
 
-        // Atiende una petición: solo GET, y solo las rutas /profile y /readings.
-        // El formato es JSON salvo que se pida XML con ?format=xml.
+        // Punto de entrada de cada petición: primero pasa por el limitador de clientes y conexiones
+        // (429 si se supera) y después se procesa. El hueco del limitador se libera siempre al terminar.
         private static void HandleRequest(HttpListenerContext context)
         {
+            bool admitted = false;
             try
             {
-                HttpListenerResponse response = context.Response;
                 bool asXml = string.Equals(context.Request.QueryString["format"], "xml", StringComparison.OrdinalIgnoreCase);
+                string clientAddress = context.Request.RemoteEndPoint?.Address.ToString() ?? "";
 
-                if (context.Request.HttpMethod != "GET")
+                admitted = ConnectionLimiter.TryEnter(clientAddress);
+                if (!admitted)
                 {
-                    Respond(response, 405, ErrorBody("Method not allowed", asXml), asXml);
+                    Respond(context.Response, 429, ErrorBody("Too many clients or connections", asXml), asXml);
                     return;
                 }
 
-                string path = context.Request.Url.AbsolutePath.TrimEnd('/').ToLowerInvariant();
-                object body;
-                if (path == "/profile") body = SnapshotStore.Profile;
-                else if (path == "/readings") body = SnapshotStore.Readings;
-                else
-                {
-                    Respond(response, 404, ErrorBody("Not found", asXml), asXml);
-                    return;
-                }
-
-                // Aún no hay datos (el plugin está arrancando o cargando un perfil).
-                if (body == null)
-                {
-                    Respond(response, 503, ErrorBody("Data not ready yet", asXml), asXml);
-                    return;
-                }
-
-                Respond(response, 200, SerializeBody(body, asXml), asXml);
+                ProcessRequest(context, asXml);
             }
             catch (Exception ex)
             {
                 ErrorLogger.Write(ErrorLogger.Severity.Error, ex);
                 try { context.Response.Abort(); } catch { }
             }
+            finally
+            {
+                if (admitted) ConnectionLimiter.Leave();
+            }
+        }
+
+        // Atiende una petición admitida. OPTIONS es la consulta previa de los navegadores (CORS);
+        // el resto solo GET. /challenge es libre; /profile y /readings exigen firma válida.
+        // El formato es JSON salvo que se pida XML con ?format=xml.
+        private static void ProcessRequest(HttpListenerContext context, bool asXml)
+        {
+            HttpListenerResponse response = context.Response;
+
+            if (context.Request.HttpMethod == "OPTIONS")
+            {
+                RespondPreflight(response);
+                return;
+            }
+
+            if (context.Request.HttpMethod != "GET")
+            {
+                Respond(response, 405, ErrorBody("Method not allowed", asXml), asXml);
+                return;
+            }
+
+            string path = context.Request.Url.AbsolutePath.TrimEnd('/').ToLowerInvariant();
+
+            if (path == "/challenge")
+            {
+                RespondChallenge(response, asXml);
+                return;
+            }
+
+            if (path != "/profile" && path != "/readings")
+            {
+                Respond(response, 404, ErrorBody("Not found", asXml), asXml);
+                return;
+            }
+
+            if (!HmacAuth.IsAuthorized(context.Request.Headers["Authorization"], ServerSettings.Password))
+            {
+                Respond(response, 401, ErrorBody("Unauthorized", asXml), asXml);
+                return;
+            }
+
+            object body;
+            if (path == "/profile") body = SnapshotStore.Profile;
+            else body = SnapshotStore.Readings;
+
+            // Aún no hay datos (el plugin está arrancando o cargando un perfil).
+            if (body == null)
+            {
+                Respond(response, 503, ErrorBody("Data not ready yet", asXml), asXml);
+                return;
+            }
+
+            Respond(response, 200, SerializeBody(body, asXml), asXml);
+        }
+
+        // Entrega un número de un solo uso, o 429 si ya hay demasiados pendientes de usar.
+        private static void RespondChallenge(HttpListenerResponse response, bool asXml)
+        {
+            string nonce = HmacAuth.CreateNonce();
+            if (nonce == null)
+            {
+                Respond(response, 429, ErrorBody("Too many pending challenges", asXml), asXml);
+                return;
+            }
+
+            Respond(response, 200, SerializeBody(new ChallengeInfo { Nonce = nonce }, asXml), asXml);
         }
 
         // Convierte los datos a JSON o a XML según el formato pedido.
@@ -165,7 +221,8 @@ namespace FanControl.DataServer
         // Cuerpo de las respuestas de error, en el mismo formato que se pidió.
         private static string ErrorBody(string message, bool asXml)
         {
-            if (asXml) return "<Error>" + System.Security.SecurityElement.Escape(message) + "</Error>";
+            if (asXml)
+                return "<Error>" + System.Security.SecurityElement.Escape(message) + "</Error>";
             return JsonConvert.SerializeObject(new { error = message });
         }
 
@@ -182,5 +239,17 @@ namespace FanControl.DataServer
             response.Close();
         }
 
+        // Respuesta a la consulta previa (OPTIONS) que hace el navegador antes de enviar la
+        // cabecera Authorization desde una página de otro origen. Sin cuerpo.
+        private static void RespondPreflight(HttpListenerResponse response)
+        {
+            response.StatusCode = 204;
+            response.Headers["Access-Control-Allow-Origin"] = "*";
+            response.Headers["Access-Control-Allow-Methods"] = "GET, OPTIONS";
+            response.Headers["Access-Control-Allow-Headers"] = "Authorization";
+            response.Headers["Access-Control-Max-Age"] = "600";
+            response.ContentLength64 = 0;
+            response.Close();
+        }
     }
 }

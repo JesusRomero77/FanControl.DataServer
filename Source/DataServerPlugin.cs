@@ -30,11 +30,13 @@ namespace FanControl.DataServer
             thread.Start();
         }
 
-        // Arranca el servidor HTTP. Si falla, el plugin sigue vivo: solo se anota el error.
+        // Lee los ajustes del XML y arranca el servidor HTTP. Si falla, el plugin sigue vivo: solo
+        // se anota el error.
         private void StartServer()
         {
             try
             {
+                ServerSettings.Load();
                 _server.Start(ServerSettings.Port);
             }
             catch (Exception ex)
@@ -72,7 +74,6 @@ namespace FanControl.DataServer
                 _isInitializing = false;
             }
         }
-
         public void Update()
         {
             // Mientras InitialStartup repuebla las listas (tras un cambio de perfil), no las tocamos.
