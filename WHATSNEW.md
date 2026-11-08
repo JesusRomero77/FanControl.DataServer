@@ -1,14 +1,15 @@
-## FanControl.DataServer 2.0
+# What's New
 
-**Breaking change:** `/profile` and `/readings` now require a password. Any program or page written for 1.0 (including the old `DataServer-client.html`) will receive 401 responses until it is updated. Use the `DataServer-client.html` from this release, or add the challenge and signature steps described in the README. Plugins that read the data, such as FanControl.RemoteSensors, must also be version 2.0.
+> **WatchTower:** DataServer can be configured with [WatchTower](https://github.com/JesusRomero77/FanControl.WatchTower), a program that configures the whole family of plugins. Its DataServer tab edits the same `DataServerConfig.xml` that the plugin reads.
 
-### What's new
+## 2.0
 
-- **Password protection.** Clients prove they know the password with a signed challenge (HMAC-SHA256), so the password itself is never sent over the network. New `/challenge` endpoint.
-- **Configurable port and password** through `%LocalAppData%\FanControl\DataServerConfig.xml`, which you can edit by hand or with the DataServer tab of WatchTower. Defaults: port 8765 and password `Password1234`. That default password is public, so change it. Restart the FanControl interface after changing the file.
-- **Connection limits** to protect FanControl from badly written clients: at most 10 requests served at the same time and 5 different client addresses. Anything above that receives a 429 response.
-- **Updated example client** (`DataServer-client.html`) with password support.
+- Version 2.0 is not compatible with 1.0 clients: `/profile` and `/readings` now require a password, so any program or page written for 1.0 (including the 1.0 `DataServer-client.html`) will receive 401 responses until it is updated. Plugins that read the data, such as FanControl.RemoteSensors, must also be version 2.0.
+- Clients now prove they know the password with a signed challenge (HMAC-SHA256), so the password itself is never sent over the network. The new `/challenge` address returns a one-time number that the client signs; each number works for a single request and expires after 10 seconds.
+- The port and the password are now configurable in `DataServerConfig.xml`, in `%LocalAppData%\FanControl`. The plugin creates it the first time it starts, with the default port (8765) and the default password (`Password1234`, which is public, so change it). The plugin only reads the file when it starts, so restart the FanControl interface after changing it.
+- The server now limits how many clients and connections can use it at the same time (10 requests being served and 5 different client addresses), so a badly written client cannot overload FanControl. Anything above that receives a 429 response.
+- `DataServer-client.html` now asks for the password and signs its requests.
 
-### Installation
+## 1.0
 
-Download `FanControl.DataServer.dll` and install it with FanControl's plugin installer, or copy it to the `Plugins` folder and restart the FanControl interface. See the README for details.
+- Initial release.
